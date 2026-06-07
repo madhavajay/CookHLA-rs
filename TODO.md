@@ -31,7 +31,12 @@ consensus/Python orchestration ≈ minutes). No JVM (Beagle runs in-process-clas
 
 **~4,500 lines of Rust · 50 tests green · `clippy -D warnings` + `fmt` clean.**
 
-- ✅ Workspace + CI + containers (`docker/`: oracle = original CookHLA conda env; cookhla-rs).
+- ✅ Workspace + containers + CI. **Multi-arch (amd64 + arm64) `cookhla-rs` Docker image**
+  (`docker/Dockerfile.cookhla-rs`): self-contained — `cookhla` + `beagle-rs` (built from the
+  submodule) + `plink` (bioconda 1.90b7.7, both arches). **Both arches built and verified to
+  produce calls identical to the golden.** CI (`.github/workflows/ci.yml`): `rust`
+  (fmt/clippy/test) + `beagle-rs` build + `docker` multi-arch buildx → `ghcr.io/<owner>/cookhla-rs`
+  on push/tags. Committed + pushed to `origin/main`.
 - ✅ Oracle captured (Beagle5 path): golden `.alleles`/`.hped` + ~200 intermediate stage files.
 
 ### Not yet ported (later milestones — not on the default `example` path)
