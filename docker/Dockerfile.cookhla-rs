@@ -1,0 +1,24 @@
+# The cookhla-rs image: build the Rust port, then run it alongside the same vendored
+# fast binaries the original keeps (plink, mach1) — Beagle is replaced in-process by
+# beagle-rs (wired in Phase 7), so no JVM is needed here.
+#
+# Build context = repo root:  docker build -f docker/Dockerfile.cookhla-rs -t cookhla-rs .
+FROM rust:1-bookworm AS build
+WORKDIR /src
+# Copy just what the build needs (keeps the context small; repos/ is huge).
+COPY Cargo.toml rust-toolchain.toml /src/
+COPY crates /src/crates
+# (When beagle-rs is wired as a path dep, also: COPY repos/beagle-rs /src/repos/beagle-rs)
+RUN cargo build --release -p cookhla-cli
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates libgomp1 && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /work
+COPY --from=build /src/target/release/cookhla /usr/local/bin/cookhla
+# Keep the fast compiled tools cookhla-rs still shells out to (staged replacement).
+COPY repos/CookHLA/dependency/plink repos/CookHLA/dependency/mach1 /opt/cookhla/dependency/
+RUN chmod +x /opt/cookhla/dependency/* || true
+ENV PATH=/opt/cookhla/dependency:$PATH
+ENTRYPOINT ["cookhla"]

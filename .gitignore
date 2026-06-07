@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Parity artifacts produced by the oracle / Rust runs (regenerated, not committed).
+/fixtures/example/golden/
+/fixtures/example/rs/
+/fixtures/**/intermediates/
+
+# Local scratch
+/tmp/
+*.log

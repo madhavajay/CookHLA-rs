@@ -1,0 +1,10 @@
+# Keep the Rust build context small. The oracle image explicitly COPYs repos/CookHLA, so it is
+# NOT ignored; but the cookhla-rs image only needs Cargo + crates, and the huge reference data
+# (1000G_REF, beagle-rs git history) must not bloat every build.
+target/
+fixtures/
+**/.git/
+repos/CookHLA/1000G_REF/
+repos/beagle-rs/beagle/
+repos/beagle-rs/reference/
+repos/beagle-rs/target/

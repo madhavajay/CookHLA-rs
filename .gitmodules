@@ -1,0 +1,6 @@
+[submodule "repos/CookHLA"]
+	path = repos/CookHLA
+	url = git@github.com:madhavajay/CookHLA.git
+[submodule "repos/beagle-rs"]
+	path = repos/beagle-rs
+	url = git@github.com:madhavajay/beagle-rs.git

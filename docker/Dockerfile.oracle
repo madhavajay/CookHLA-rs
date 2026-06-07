@@ -1,0 +1,30 @@
+# The "golden oracle": the ORIGINAL CookHLA (Python/R/Java/csh) in its pinned conda
+# environment, so we can run it reproducibly and capture golden outputs to test cookhla-rs
+# against. Mirrors repos/CookHLA/CookHLA_LINUX.yml (Python 3.6.5, pandas 0.25.3, pyliftover,
+# R 3.5.1, openjdk 8, plink 1.90b6.12, tcsh) — i.e. the "container inside the cookhla folder".
+#
+# Build context = repo root:  docker build -f docker/Dockerfile.oracle -t cookhla-oracle .
+FROM continuumio/miniconda3:latest
+
+# System bits the conda env assumes are present for some R/Java/csh steps.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        procps ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/CookHLA
+# Bring in the reference implementation + its vendored binaries + example data.
+COPY repos/CookHLA/ /opt/CookHLA/
+
+# Recreate the pinned CookHLA environment. (Old packages live in the anaconda archive;
+# this needs network at build time.)
+RUN conda env create -f CookHLA_LINUX.yml && conda clean -afy
+
+# The vendored helpers must stay executable.
+RUN chmod +x dependency/plink dependency/mach1 dependency/tcsh || true
+
+# Everything runs inside the `CookHLA` env.
+ENV PATH=/opt/conda/envs/CookHLA/bin:$PATH
+SHELL ["conda", "run", "--no-capture-output", "-n", "CookHLA", "/bin/bash", "-c"]
+
+# Default: drop into the env. The oracle run is driven by docker/oracle-run.sh.
+ENTRYPOINT ["conda", "run", "--no-capture-output", "-n", "CookHLA", "/bin/bash"]
