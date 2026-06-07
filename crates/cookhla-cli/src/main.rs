@@ -106,7 +106,7 @@ fn main() -> Result<()> {
         "  genetic_map  = {}",
         args.genetic_map
             .as_deref()
-            .unwrap_or("<auto: MakeGeneticMap>")
+            .unwrap_or("<none given: will auto-resolve a bundled panel map>")
     );
     eprintln!(
         "  beagle       = {}",
@@ -125,13 +125,25 @@ fn main() -> Result<()> {
         anyhow::bail!("--beagle4 (legacy Beagle 4.1 path) is not yet ported; default uses Beagle 5.5 via beagle-rs.");
     }
 
-    // The adaptive genetic map must be provided: MakeGeneticMap/MACH is a later milestone.
-    let (Some(gm), Some(ae)) = (args.genetic_map.as_ref(), args.average_erate.as_ref()) else {
-        anyhow::bail!(
-            "this build requires a precomputed adaptive genetic map: pass -gm <...clpsB> and -ae \
-             <...aver.erate>. (Auto-generating the AGM — MakeGeneticMap/MACH — is not yet ported.)"
-        );
+    // Adaptive genetic map: use -gm/-ae if given, else auto-resolve a bundled map for this
+    // reference panel (MakeGeneticMap/MACH auto-generation is not ported, so we ship precomputed
+    // per-panel maps and look them up by the -ref basename).
+    let (gm, ae): (String, String) = match (args.genetic_map.clone(), args.average_erate.clone()) {
+        (Some(gm), Some(ae)) => (gm, ae),
+        _ => match resolve_bundled_map(&args.reference) {
+            Some((gm, ae)) => {
+                eprintln!("  genetic_map  = {gm}  (bundled, auto-resolved)");
+                (gm, ae)
+            }
+            None => anyhow::bail!(
+                "no adaptive genetic map for reference '{}'. Pass -gm <...clpsB> + -ae <...aver.erate>, \
+                 or use a panel with a bundled map (set $COOKHLA_MAPS or use /opt/cookhla/1000G_REF/maps). \
+                 Auto-generating a map (MakeGeneticMap/MACH) is not yet ported.",
+                args.reference
+            ),
+        },
     };
+    let (gm, ae) = (&gm, &ae);
 
     let plink = cookhla::front::Plink::locate()
         .context("plink not found — set $PLINK or vendor repos/CookHLA/dependency/plink")?;
@@ -194,6 +206,37 @@ fn main() -> Result<()> {
         elapsed.as_secs_f64()
     );
     Ok(())
+}
+
+/// Find a bundled adaptive map for a reference panel: look for the `<ref_basename>.mach_step.avg.clpsB`
+/// and `<ref_basename>.aver.erate` pair in `$COOKHLA_MAPS`, the image default, the local data dir, or
+/// next to the panel itself. Returns the two paths if both are present.
+fn resolve_bundled_map(reference: &str) -> Option<(String, String)> {
+    let base = std::path::Path::new(reference)
+        .file_name()?
+        .to_string_lossy()
+        .to_string();
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(d) = std::env::var("COOKHLA_MAPS") {
+        dirs.push(d.into());
+    }
+    dirs.push("/opt/cookhla/1000G_REF/maps".into());
+    dirs.push("data/maps/1000G_REF".into());
+    if let Some(parent) = std::path::Path::new(reference).parent() {
+        dirs.push(parent.join("maps"));
+        dirs.push(parent.to_path_buf());
+    }
+    for d in dirs {
+        let gm = d.join(format!("{base}.mach_step.avg.clpsB"));
+        let ae = d.join(format!("{base}.aver.erate"));
+        if gm.exists() && ae.exists() {
+            return Some((
+                gm.to_string_lossy().into_owned(),
+                ae.to_string_lossy().into_owned(),
+            ));
+        }
+    }
+    None
 }
 
 /// Render an overlap value the way the reference labels them (`0.5`, `1`, `1.5`).

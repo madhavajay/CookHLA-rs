@@ -33,12 +33,17 @@ RUN chmod +x /usr/local/bin/cookhla /usr/local/bin/beagle-rs
 # so the image is a drop-in (point -ref at /opt/cookhla/1000G_REF/1000G_REF.<POP>.chr6.hg18.29mb-34mb.inT1DGC).
 COPY repos/CookHLA/1000G_REF /opt/cookhla/1000G_REF
 COPY repos/CookHLA/example   /opt/cookhla/example
+# Precomputed per-panel adaptive genetic maps (MakeGeneticMap/MACH, deterministic seed), named by
+# panel basename so cookhla auto-resolves them when -gm/-ae are omitted — so every 1000G panel runs
+# out of the box, multi-arch, with no MACH at runtime.
+COPY data/maps/1000G_REF /opt/cookhla/1000G_REF/maps
 # Put plink (and any conda tool) on PATH explicitly, so it resolves in NON-login shells too — e.g.
 # Nextflow's `.command.sh`, which bypasses the micromamba entrypoint that would otherwise set PATH.
 ENV PATH="/opt/conda/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin" \
     PLINK=/opt/conda/bin/plink \
     BEAGLE_RS=/usr/local/bin/beagle-rs \
     LD_LIBRARY_PATH=/opt/conda/lib \
-    COOKHLA_1000G_REF=/opt/cookhla/1000G_REF
+    COOKHLA_1000G_REF=/opt/cookhla/1000G_REF \
+    COOKHLA_MAPS=/opt/cookhla/1000G_REF/maps
 WORKDIR /data
 ENTRYPOINT ["cookhla"]
