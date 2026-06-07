@@ -1,20 +1,22 @@
 # syntax=docker/dockerfile:1
 #
 # Self-contained, multi-arch (linux/amd64 + linux/arm64) cookhla-rs image:
-#   cookhla (the port) + beagle-rs (the imputation engine) + plink (QC).
+#   cookhla (the port) + beagle-rs (the imputation engine) + plink (QC) + bundled reference panels.
 #
 # plink has no portable upstream binary; bioconda publishes it for both linux-64 and
 # linux-aarch64, so we install it via micromamba and get the right arch natively under buildx.
 # The chr6 liftover chain is embedded in the cookhla binary, so the only external tools at runtime
-# are plink (via $PLINK) and beagle-rs (via $BEAGLE_RS).
+# are plink (via $PLINK / on PATH) and beagle-rs (via $BEAGLE_RS / on PATH).
 #
 # Build (multi-arch):
 #   docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile.cookhla-rs -t cookhla-rs .
 
-# ---- Rust build (runs per target platform under buildx) ----
+# ---- Rust build (lean context: only what the build needs; keeps reference data out of this stage) ----
 FROM rust:1-bookworm AS build
 WORKDIR /src
-COPY . /src
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates ./crates
+COPY repos/beagle-rs ./repos/beagle-rs
 RUN cargo build --release -p cookhla-cli \
  && cargo build --release --manifest-path repos/beagle-rs/Cargo.toml -p beagle-rs-cli
 
@@ -27,8 +29,16 @@ RUN micromamba install -y -n base -c conda-forge -c bioconda plink=1.90b7.7 \
 COPY --from=build /src/target/release/cookhla /usr/local/bin/cookhla
 COPY --from=build /src/repos/beagle-rs/target/release/beagle-rs /usr/local/bin/beagle-rs
 RUN chmod +x /usr/local/bin/cookhla /usr/local/bin/beagle-rs
-ENV PLINK=/opt/conda/bin/plink \
+# Bundled SNP2HLA-formatted reference panels (1000 Genomes, 5 super-populations) + example data,
+# so the image is a drop-in (point -ref at /opt/cookhla/1000G_REF/1000G_REF.<POP>.chr6.hg18.29mb-34mb.inT1DGC).
+COPY repos/CookHLA/1000G_REF /opt/cookhla/1000G_REF
+COPY repos/CookHLA/example   /opt/cookhla/example
+# Put plink (and any conda tool) on PATH explicitly, so it resolves in NON-login shells too — e.g.
+# Nextflow's `.command.sh`, which bypasses the micromamba entrypoint that would otherwise set PATH.
+ENV PATH="/opt/conda/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin" \
+    PLINK=/opt/conda/bin/plink \
     BEAGLE_RS=/usr/local/bin/beagle-rs \
-    LD_LIBRARY_PATH=/opt/conda/lib
+    LD_LIBRARY_PATH=/opt/conda/lib \
+    COOKHLA_1000G_REF=/opt/cookhla/1000G_REF
 WORKDIR /data
 ENTRYPOINT ["cookhla"]
