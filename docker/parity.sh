@@ -1,38 +1,31 @@
 #!/usr/bin/env bash
-# Run cookhla-rs on the example and diff its HLA calls against the oracle's golden output.
+# Run cookhla-rs on the bundled example and diff its HLA calls against the oracle golden.
 #
-# Parity bar (v1): identical allele *calls* in the *.alleles file; posterior-probability columns
-# may differ within a small epsilon (MACH RNG + FP accumulation). This script does the exact
-# call comparison and reports probability drift. Wire-up completes with Phase 7 (impute) and
-# Phase 5 (consensus); until then it documents the intended gate.
+# Parity bar: the allele *calls* (cols 1-5 of *.alleles) must be identical; the posterior columns
+# may differ slightly (beagle-rs is Beagle 5.5 vs the oracle's 5.1).
+#
+#   docker/parity.sh                       # uses the local `cookhla-rs` image
+#   IMAGE=ghcr.io/madhavajay/cookhla-rs docker/parity.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-GOLDEN="${GOLDEN:-$ROOT/fixtures/example/golden/1958BC+HM_CEU_REF.alleles}"
-RS_OUT="${RS_OUT:-$ROOT/fixtures/example/rs/1958BC+HM_CEU_REF.alleles}"
+IMAGE="${IMAGE:-cookhla-rs}"
+EXAMPLE="$ROOT/repos/CookHLA/example"
+GOLDEN="$ROOT/fixtures/example/golden/1958BC+HM_CEU_REF.MHC.HLA_IMPUTATION_OUT.alleles"
 
-if [[ ! -f "$GOLDEN" ]]; then
-  echo "ERROR: golden not found ($GOLDEN). Run docker/oracle-run.sh first." >&2
-  exit 1
-fi
-if [[ ! -f "$RS_OUT" ]]; then
-  echo "ERROR: cookhla-rs output not found ($RS_OUT). Run the Rust pipeline first." >&2
-  exit 1
-fi
+[[ -f "$GOLDEN" ]] || { echo "golden not found ($GOLDEN). Run docker/oracle-run.sh first." >&2; exit 1; }
 
-# Columns of *.alleles: FID IID gene 1-digit(allele1,allele2) 4-digit(a1,a2) pp1 pp2 conf.
-# Calls = cols 1-5; probabilities = cols 6-8.
-calls() { awk '{print $1,$2,$3,$4,$5}' "$1"; }
+out="$(mktemp -d)"
+docker run --rm -v "$EXAMPLE:/data:ro" -v "$out:/out" "$IMAGE" \
+    -i /data/1958BC.hg19 -hg 19 -o /out/result -ref /data/HM_CEU_REF \
+    -gm /data/AGM.1958BC+HM_CEU_REF.mach_step.avg.clpsB \
+    -ae /data/AGM.1958BC+HM_CEU_REF.aver.erate
 
-echo "== HLA call parity (cols 1-5, must be identical) =="
-if diff <(calls "$GOLDEN") <(calls "$RS_OUT"); then
-  echo "PASS: HLA calls identical"
+echo "== HLA call parity (FID IID gene 2-digit 4-digit) =="
+if diff <(awk '{print $1,$2,$3,$4,$5}' "$out/result.alleles") \
+        <(awk '{print $1,$2,$3,$4,$5}' "$GOLDEN"); then
+  echo "PASS: HLA calls identical to the oracle golden"
 else
   echo "FAIL: HLA calls differ" >&2
   exit 1
 fi
-
-echo "== probability drift (cols 6-8, must be < 1e-4) =="
-paste "$GOLDEN" "$RS_OUT" | awk '
-  { for (k=6;k<=8;k++) { d=($k)-($(k+8)); if (d<0) d=-d; if (d>max) max=d } }
-  END { printf "max |Δprob| = %.3e\n", max; if (max > 1e-4) { print "FAIL: drift too large" > "/dev/stderr"; exit 1 } print "PASS" }'

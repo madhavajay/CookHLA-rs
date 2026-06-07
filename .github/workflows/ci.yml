@@ -3,12 +3,16 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Rust: format, lint, unit + integration tests. The golden-parity integration tests skip
+  # loudly when the captured fixtures are absent (they are not committed), so this job exercises
+  # the unit tests + the inline-fixture parity (converters vs jars, consensus math, liftover, ...).
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -23,3 +27,57 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: test
         run: cargo test --workspace
+
+  # Build the beagle-rs imputation engine (the one submodule the runtime needs) to catch breakage.
+  beagle-rs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: init beagle-rs submodule (rewrite SSH → token https; non-recursive)
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
+          git submodule update --init repos/beagle-rs
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --manifest-path repos/beagle-rs/Cargo.toml -p beagle-rs-cli
+
+  # Multi-arch (amd64 + arm64) image → ghcr.io/<owner>/cookhla-rs. Pushes on branch/tag, builds
+  # only on PRs. plink comes from bioconda (both arches); beagle-rs is built from the submodule.
+  docker:
+    needs: [rust]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: init submodules (CookHLA reference binaries + beagle-rs; non-recursive)
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "git@github.com:"
+          git submodule update --init repos/CookHLA repos/beagle-rs
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/cookhla-rs
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.cookhla-rs
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

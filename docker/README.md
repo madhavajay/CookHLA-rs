@@ -1,40 +1,53 @@
 # Containers
 
-Two images, both built from the repo root so they can see `repos/CookHLA` (the reference
-source, its vendored binaries, and the example data).
+| Image | Dockerfile | What | Arch |
+|---|---|---|---|
+| `cookhla-rs` | `Dockerfile.cookhla-rs` | The **Rust port**, self-contained: `cookhla` + `beagle-rs` (imputation engine) + `plink` (from bioconda). Runs raw input → `.alleles`. | **amd64 + arm64** |
+| `cookhla-oracle` | `Dockerfile.oracle` | The **original** CookHLA in its pinned conda env. The golden oracle — run it to produce reference output for parity. | amd64 |
 
-| Image | Dockerfile | What |
-|---|---|---|
-| `cookhla-oracle` | `Dockerfile.oracle` | The **original** CookHLA in its pinned conda env (`CookHLA_LINUX.yml`). The golden oracle — run it to produce reference outputs. |
-| `cookhla-rs` | `Dockerfile.cookhla-rs` | The **Rust port** + the fast binaries it still shells out to (`plink`, `mach1`). Beagle is replaced in-process by `beagle-rs` (Phase 7). |
+The `cookhla-rs` image bundles everything it needs at runtime: the chr6 liftover chain is embedded
+in the binary, `plink` comes from bioconda (published for both architectures), and `beagle-rs` is
+built from the submodule. They are wired via `$PLINK` and `$BEAGLE_RS`.
 
-## Generate the golden reference
+## Run it
 
 ```sh
-docker build -f docker/Dockerfile.oracle -t cookhla-oracle .
-docker/oracle-run.sh          # -> fixtures/example/golden/1958BC+HM_CEU_REF.{alleles,hped}
+docker run --rm -v "$PWD/data:/data" ghcr.io/madhavajay/cookhla-rs \
+    -i /data/1958BC.hg19 -hg 19 -o /data/out -ref /data/HM_CEU_REF \
+    -gm /data/AGM.clpsB -ae /data/AGM.aver.erate
+# -> /data/out.alleles
 ```
 
-The example ships a precomputed adaptive genetic map (`example/AGM.1958BC+HM_CEU_REF.*`), so
-**MACH is not invoked** for this case — it isolates the impute + consensus core for first parity.
+(`/data` is the working dir; mount your PLINK target, reference panel, and adaptive genetic map there.)
 
-## Run the Rust port
+## Build it
+
+Single arch (local, fast):
 
 ```sh
 docker build -f docker/Dockerfile.cookhla-rs -t cookhla-rs .
-docker run --rm cookhla-rs --help
 ```
 
-## Check parity
+Multi-arch (amd64 + arm64) — arm64 builds under QEMU emulation locally (slow); CI does the real
+build/push:
 
 ```sh
-docker/parity.sh              # diffs HLA calls (must match) + probability drift (< 1e-4)
+docker/build-multiarch.sh                                   # build both, verify
+PUSH=1 IMAGE=ghcr.io/madhavajay/cookhla-rs:latest docker/build-multiarch.sh   # build + push
+PLATFORMS=linux/arm64 LOAD=1 docker/build-multiarch.sh      # one arch, load locally
 ```
 
-## Or via compose
+CI (`.github/workflows/ci.yml`) builds the multi-arch image and pushes it to
+`ghcr.io/<owner>/cookhla-rs` on every push to `main` and on tags.
+
+## Generate the golden reference (oracle)
 
 ```sh
-docker compose -f docker/compose.yml build
-docker compose -f docker/compose.yml run --rm oracle      # original CookHLA shell
-docker compose -f docker/compose.yml run --rm cookhla-rs --help
+docker build -f docker/Dockerfile.oracle -t cookhla-oracle .
+docker/oracle-run.sh          # -> fixtures/example/golden/...
+docker/parity.sh              # diff cookhla-rs calls vs the golden
 ```
+
+The example ships a precomputed adaptive genetic map, so MACH is not invoked for it — this
+isolates the impute + consensus core. The `cookhla-rs` image produces HLA calls **identical** to
+the oracle's on the example (verified on both amd64 and arm64).

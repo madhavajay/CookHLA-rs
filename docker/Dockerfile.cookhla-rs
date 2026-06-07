@@ -1,24 +1,34 @@
-# The cookhla-rs image: build the Rust port, then run it alongside the same vendored
-# fast binaries the original keeps (plink, mach1) — Beagle is replaced in-process by
-# beagle-rs (wired in Phase 7), so no JVM is needed here.
+# syntax=docker/dockerfile:1
 #
-# Build context = repo root:  docker build -f docker/Dockerfile.cookhla-rs -t cookhla-rs .
+# Self-contained, multi-arch (linux/amd64 + linux/arm64) cookhla-rs image:
+#   cookhla (the port) + beagle-rs (the imputation engine) + plink (QC).
+#
+# plink has no portable upstream binary; bioconda publishes it for both linux-64 and
+# linux-aarch64, so we install it via micromamba and get the right arch natively under buildx.
+# The chr6 liftover chain is embedded in the cookhla binary, so the only external tools at runtime
+# are plink (via $PLINK) and beagle-rs (via $BEAGLE_RS).
+#
+# Build (multi-arch):
+#   docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile.cookhla-rs -t cookhla-rs .
+
+# ---- Rust build (runs per target platform under buildx) ----
 FROM rust:1-bookworm AS build
 WORKDIR /src
-# Copy just what the build needs (keeps the context small; repos/ is huge).
-COPY Cargo.toml rust-toolchain.toml /src/
-COPY crates /src/crates
-# (When beagle-rs is wired as a path dep, also: COPY repos/beagle-rs /src/repos/beagle-rs)
-RUN cargo build --release -p cookhla-cli
+COPY . /src
+RUN cargo build --release -p cookhla-cli \
+ && cargo build --release --manifest-path repos/beagle-rs/Cargo.toml -p beagle-rs-cli
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates libgomp1 && \
-    rm -rf /var/lib/apt/lists/*
-WORKDIR /work
+# ---- Runtime: micromamba base + bioconda plink (both arches) ----
+FROM mambaorg/micromamba:bookworm-slim AS runtime
+USER root
+# 1.90b7.7 is the plink build bioconda publishes for BOTH linux-64 and linux-aarch64.
+RUN micromamba install -y -n base -c conda-forge -c bioconda plink=1.90b7.7 \
+ && micromamba clean -afy
 COPY --from=build /src/target/release/cookhla /usr/local/bin/cookhla
-# Keep the fast compiled tools cookhla-rs still shells out to (staged replacement).
-COPY repos/CookHLA/dependency/plink repos/CookHLA/dependency/mach1 /opt/cookhla/dependency/
-RUN chmod +x /opt/cookhla/dependency/* || true
-ENV PATH=/opt/cookhla/dependency:$PATH
+COPY --from=build /src/repos/beagle-rs/target/release/beagle-rs /usr/local/bin/beagle-rs
+RUN chmod +x /usr/local/bin/cookhla /usr/local/bin/beagle-rs
+ENV PLINK=/opt/conda/bin/plink \
+    BEAGLE_RS=/usr/local/bin/beagle-rs \
+    LD_LIBRARY_PATH=/opt/conda/lib
+WORKDIR /data
 ENTRYPOINT ["cookhla"]

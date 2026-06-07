@@ -1,24 +1,27 @@
-# Two services: the original CookHLA (golden oracle) and the Rust port. Build context is the
-# repo root for both so they can see repos/CookHLA (source + vendored binaries + example data).
+# Two services: the original CookHLA (golden oracle) and the multi-arch Rust port. Build context
+# is the repo root for both so they can see repos/CookHLA (+ vendored binaries + example data) and
+# repos/beagle-rs (the imputation engine).
 #
 #   docker compose -f docker/compose.yml build
-#   docker compose -f docker/compose.yml run --rm oracle     # original CookHLA env
+#   docker compose -f docker/compose.yml run --rm oracle      # original CookHLA env
 #   docker compose -f docker/compose.yml run --rm cookhla-rs --help
 name: cookhla
 
 services:
-  oracle:
-    image: cookhla-oracle
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.oracle
-    volumes:
-      - ../fixtures:/fixtures
-
   cookhla-rs:
     image: cookhla-rs
     build:
       context: ..
       dockerfile: docker/Dockerfile.cookhla-rs
+    # Mount your PLINK target + reference panel + adaptive map under /data, then pass cookhla args:
+    #   ... run --rm cookhla-rs -i /data/target.hg19 -hg 19 -o /data/out -ref /data/PANEL -gm ... -ae ...
+    volumes:
+      - ../repos/CookHLA/example:/data
+
+  oracle:
+    image: cookhla-oracle
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.oracle
     volumes:
       - ../fixtures:/fixtures
