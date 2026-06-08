@@ -39,33 +39,34 @@ consensus/Python orchestration ≈ minutes). No JVM (Beagle runs in-process-clas
   on push/tags. Committed + pushed to `origin/main`.
 - ✅ Oracle captured (Beagle5 path): golden `.alleles`/`.hped` + ~200 intermediate stage files.
 
-### ⚠️ Known gap: only the CEU example runs today (adaptive maps)
+### ✅ All bundled panels run (adaptive maps) — DONE (2026-06-08)
 
-`cookhla-rs` **requires** a precomputed adaptive genetic map (`-gm`/`-ae`). The repo ships one
-**only for `HM_CEU_REF`** (the example). The bundled 1000 Genomes panels (ALL/AFR/AMR/EAS/EUR/SAS)
-have **no maps**, so they currently can't run. (The original Python CookHLA auto-generates the map
-when `-gm`/`-ae` are omitted, via `MakeGeneticMap`→MACH — but that's the unported piece.)
-**For a smoke test that runs now, use the CEU panel.**
+`cookhla-rs` requires a precomputed adaptive genetic map (`-gm`/`-ae`); the repo only shipped one
+for `HM_CEU_REF`, so the 1000 Genomes panels couldn't run. **Fixed by precomputing + bundling a map
+per panel** (the `precompute-the-maps` plan — keeps the image multi-arch, no MACH at runtime):
+- [x] Ran `MakeGeneticMap` (oracle, deterministic `mach1 seed=123456`, **~24 min/panel**, run 6-way
+      in parallel ≈ 25 min; small-sample mode = 200 reference samples → **population-derived, reusable
+      maps**) for **all 6 panels** → `.mach_step.avg.clpsB` + `.aver.erate`.
+- [x] Bundled in-repo at `data/maps/1000G_REF/<ref_basename>.{mach_step.avg.clpsB,aver.erate}` (~2 MB)
+      and in the image at `/opt/cookhla/1000G_REF/maps` (`ENV COOKHLA_MAPS`).
+- [x] `cookhla-cli` **auto-resolves** the map by `-ref` basename when `-gm`/`-ae` are omitted
+      (`resolve_bundled_map`: `$COOKHLA_MAPS` → image default → local data dir → next to the panel).
+- [x] **Verified from a fresh `ghcr.io/.../cookhla-rs:latest` pull: all 6 panels (ALL/AFR/AMR/EAS/
+      EUR/SAS) impute with no map args** — 50 calls each (A/B/C/DQB1/DRB1; these panels lack DQA1/DP).
+      ALL ~20 s (2504 samples), super-pops ~3–5 s.
 
-How HLA imputation works here (for context): the **panel** (`1000G_REF`) holds reference people's
-SNPs *and* HLA alleles; imputation predicts a target's HLA alleles from their SNPs. The **adaptive
-map** is a separate per-panel LD-tuning input — a property of the *panel/population*, not the
-target (CookHLA learns it from a ~100–200-sample subset; for small targets, from reference samples
-only). So the map can be generated **once per panel and reused**.
+Context — how HLA imputation works here: the **panel** (`1000G_REF`) holds reference people's SNPs
+*and* HLA alleles; imputation predicts a target's HLA alleles from their SNPs. The **adaptive map**
+is a separate per-panel LD-tuning input — a property of the *panel/population*, not the target — so
+generating it once per panel and reusing it is correct (and exact for small targets, a strong
+approximation for large cohorts).
 
-**Plan to make all panels work** — `precompute-the-maps` (preferred; keeps the image multi-arch
-and needs no MACH at runtime):
-- [ ] Run `MakeGeneticMap` (oracle, amd64, deterministic — `mach1` default `seed=123456`) **once
-      per 1000G panel** → `.mach_step.avg.clpsB` + `.aver.erate`; bundle the 6 small map files in
-      the image (e.g. `/opt/cookhla/1000G_REF/maps/`). Then ALL/EUR/… run, multi-arch, no MACH.
-- [ ] (Alternative/also) port `MakeGeneticMap` natively (STEP0 randomize + `STEP4-buildMap.R`
-      `gmap += −½·log(1−rec)` + `STEP5-collapseHLA.R` + the MACH input prep). `mach1` is **x86-only**
-      (not in bioconda) → native map-gen is amd64-only (arm64 would need precomputed maps or x86 emu).
-- Note: the **NYGC high-coverage 1KGP VCFs** the user is staging at `/home/linux/data/hgp1k` are
-  GRCh38 per-chromosome SNV/INDEL/SV panels — only **chr6** is relevant to HLA, and they hold SNPs
-  but **not HLA allele calls**, so building a *fresh* panel would also need HLA typing of those
-  samples. The existing bundled `1000G_REF` panels already pair SNPs+HLA, so the maps can be
-  generated from them directly without this upload.
+Still open here:
+- [ ] Native `MakeGeneticMap` port (for **non-1000G** references that have no bundled map): STEP0
+      randomize + `STEP4-buildMap.R` (`gmap += −½·log(1−rec)`) + `STEP5-collapseHLA.R` + MACH input
+      prep. `mach1` is **x86-only** (not in bioconda) → native map-gen would be amd64-only.
+- Note: the NYGC high-coverage 1KGP VCFs (GRCh38, per-chromosome) are **not** needed for the above —
+  only chr6 matters for HLA and they lack HLA calls (a *fresh* panel would also need HLA typing).
 
 ### Other not-yet-ported (later milestones)
 - **Legacy paths:** Beagle 4.1 (`-bgl4`), prephasing, `measureAcc`/accuracy, hg38→hg19→hg18
